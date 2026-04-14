@@ -1,0 +1,281 @@
+//@version=5
+// ============================================================================
+//  Forex Pro — Strategy версия (для бэктеста прибыльности)
+//  Логика идентична индикатору forex_smc_ict_vp.pine, но использует
+//  strategy.entry / strategy.exit для симуляции сделок и статистики.
+// ============================================================================
+
+strategy("Forex Pro — SMC+ICT+VP Strategy", shorttitle="FX Strat",
+     overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity,
+     default_qty_value=1, pyramiding=0, calc_on_order_fills=false,
+     process_orders_on_close=true, commission_type=strategy.commission.percent,
+     commission_value=0.0025, slippage=1,
+     max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=5000)
+
+// ── Даты бэктеста ──
+grpBT = "Окно бэктеста"
+startDate = input.time(timestamp("2024-01-01"), "Start", group=grpBT)
+endDate   = input.time(timestamp("2099-01-01"), "End",   group=grpBT)
+inBTWindow = time >= startDate and time <= endDate
+
+// ── Таймфреймы ──
+grpStruct = "1. Структура рынка"
+htfTF   = input.timeframe("240", "HTF",  group=grpStruct)
+mtfTF   = input.timeframe("15",  "MTF (bias)", group=grpStruct)
+ltfSwingLen = input.int(3, "LTF swing length", minval=2, maxval=20, group=grpStruct)
+swingLen      = input.int(5,  "MTF Swing Length", minval=2, maxval=50, group=grpStruct)
+useBodyBreak  = input.bool(true, "Только body breaks",     group=grpStruct)
+useHTFFilter  = input.bool(false,"Требовать HTF EMA align", group=grpStruct)
+htfEmaLen     = input.int(50, "HTF EMA length", minval=10, maxval=300, group=grpStruct)
+
+// ── Volume Profile ──
+grpVP = "2. Volume Profile"
+sessionTZ     = input.string("America/New_York", "TZ",
+     options=["America/New_York","Etc/UTC","Europe/London"], group=grpVP)
+sessionStart  = input.session("1800-0855", "Окно профиля", group=grpVP)
+rowSize       = input.int(200, "Row Size", minval=50, maxval=2000, step=50, group=grpVP)
+vaPct         = input.float(70.0, "Value Area %", minval=50.0, maxval=95.0, step=1.0, group=grpVP)
+
+// ── ICT ──
+grpICT = "3. ICT"
+fvgMinATR     = input.float(0.3, "Min FVG (× ATR)", minval=0.0, step=0.1, group=grpICT)
+fvgLookback   = input.int(5, "Окно FVG (баров)", minval=1, maxval=20, group=grpICT)
+
+// ── Сигналы ──
+grpSig = "4. Сигналы"
+useFailAuction = input.bool(true, "Failed Auction", group=grpSig)
+useBreakout    = input.bool(true, "Breakout", group=grpSig)
+requireFVG     = input.bool(true, "Требовать FVG",  group=grpSig)
+requireMSS     = input.bool(true, "Требовать MSS",  group=grpSig)
+useKillZones   = input.bool(true, "Kill Zones only", group=grpSig)
+killZone1      = input.session("0200-0500", "London KZ", group=grpSig)
+killZone2      = input.session("0700-1000", "NY KZ",     group=grpSig)
+cooldownBars   = input.int(10, "Cooldown bars", minval=0, maxval=200, group=grpSig)
+minRR          = input.float(2.0, "Min R:R", minval=1.0, step=0.5, group=grpSig)
+
+// ── Риск ──
+grpRisk = "5. Риск"
+atrLen      = input.int(14,   "ATR length",       group=grpRisk)
+slAtrMult   = input.float(1.5,"SL × ATR",         minval=0.1, step=0.1, group=grpRisk)
+tpMode      = input.string("Opposite VA", "TP",
+     options=["Opposite VA","RR Multiple","ATR Multiple"], group=grpRisk)
+rrTarget    = input.float(3.0,"RR Target",        minval=1.0, step=0.5, group=grpRisk)
+tpAtrMult   = input.float(3.0,"TP × ATR",         minval=0.5, step=0.1, group=grpRisk)
+useTrailing = input.bool(false, "Включить трейлинг", group=grpRisk)
+trailAtr    = input.float(2.0, "Trail × ATR",      minval=0.5, step=0.1, group=grpRisk)
+
+// ============================================================================
+atr = ta.atr(atrLen)
+htfClose = request.security(syminfo.tickerid, htfTF, close,                   lookahead=barmerge.lookahead_off)
+htfEmaV  = request.security(syminfo.tickerid, htfTF, ta.ema(close,htfEmaLen), lookahead=barmerge.lookahead_off)
+htfBull  = htfClose > htfEmaV
+htfBear  = htfClose < htfEmaV
+
+// MTF pivots + OHLC
+mtfPH    = request.security(syminfo.tickerid, mtfTF, ta.pivothigh(high, swingLen, swingLen), lookahead=barmerge.lookahead_off)
+mtfPL    = request.security(syminfo.tickerid, mtfTF, ta.pivotlow (low,  swingLen, swingLen), lookahead=barmerge.lookahead_off)
+mtfClose = request.security(syminfo.tickerid, mtfTF, close, lookahead=barmerge.lookahead_off)
+mtfHigh  = request.security(syminfo.tickerid, mtfTF, high,  lookahead=barmerge.lookahead_off)
+mtfLow   = request.security(syminfo.tickerid, mtfTF, low,   lookahead=barmerge.lookahead_off)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+var int   bias          = 0
+if not na(mtfPH)
+    lastSwingHigh := mtfPH
+if not na(mtfPL)
+    lastSwingLow  := mtfPL
+
+brokenHigh = not na(lastSwingHigh) and (useBodyBreak ? mtfClose > lastSwingHigh : mtfHigh > lastSwingHigh)
+brokenLow  = not na(lastSwingLow ) and (useBodyBreak ? mtfClose < lastSwingLow  : mtfLow  < lastSwingLow )
+
+if brokenHigh
+    bias := 1
+    lastSwingHigh := na
+if brokenLow
+    bias := -1
+    lastSwingLow := na
+
+// ── Volume Profile ──
+inSess = not na(time(timeframe.period, sessionStart, sessionTZ))
+var bool   sessActive   = false
+var float  sessHi       = na
+var float  sessLo       = na
+var int    sessStartBar = na
+var float  sessVAH      = na
+var float  sessVAL      = na
+var float  sessPOC      = na
+var float[] priceArr = array.new_float()
+var float[] volArr   = array.new_float()
+
+if inSess and not sessActive
+    sessActive := true
+    sessHi := high
+    sessLo := low
+    sessStartBar := bar_index
+    array.clear(priceArr)
+    array.clear(volArr)
+
+if sessActive
+    sessHi := math.max(nz(sessHi, high), high)
+    sessLo := math.min(nz(sessLo, low ), low )
+    array.push(priceArr, hl2)
+    array.push(volArr, volume)
+
+if sessActive and not inSess
+    sessActive := false
+    if not na(sessHi) and not na(sessLo) and sessHi > sessLo
+        binCount = rowSize
+        binSize  = (sessHi - sessLo) / binCount
+        bins = array.new_float(binCount, 0.0)
+        n = array.size(priceArr)
+        if n > 0
+            for i = 0 to n - 1
+                p = array.get(priceArr, i)
+                v = array.get(volArr,   i)
+                idxRaw = math.floor((p - sessLo) / binSize)
+                idx = int(math.max(0, math.min(binCount - 1, idxRaw)))
+                array.set(bins, idx, array.get(bins, idx) + v)
+            pocIdx = 0
+            pocVol = 0.0
+            for i = 0 to binCount - 1
+                v = array.get(bins, i)
+                if v > pocVol
+                    pocVol := v
+                    pocIdx := i
+            totalVol = array.sum(bins)
+            target   = totalVol * vaPct / 100.0
+            vaUp = pocIdx
+            vaDn = pocIdx
+            acc  = pocVol
+            for _ = 0 to binCount
+                if acc >= target
+                    break
+                upNext = vaUp < binCount - 1 ? array.get(bins, vaUp + 1) : -1.0
+                dnNext = vaDn > 0            ? array.get(bins, vaDn - 1) : -1.0
+                if upNext < 0 and dnNext < 0
+                    break
+                if upNext >= dnNext
+                    vaUp := vaUp + 1
+                    acc  := acc + upNext
+                else
+                    vaDn := vaDn - 1
+                    acc  := acc + dnNext
+            sessVAH := sessLo + (vaUp + 1) * binSize
+            sessVAL := sessLo + vaDn       * binSize
+            sessPOC := sessLo + (pocIdx + 0.5) * binSize
+
+// ── FVG ──
+bullFVG = low  > high[2] and (low    - high[2]) >= atr * fvgMinATR
+bearFVG = high < low[2]  and (low[2] - high   ) >= atr * fvgMinATR
+var int lastBullFVGbar = na
+var int lastBearFVGbar = na
+if bullFVG
+    lastBullFVGbar := bar_index
+if bearFVG
+    lastBearFVGbar := bar_index
+activeBullFVG = not na(lastBullFVGbar) and (bar_index - lastBullFVGbar) <= fvgLookback
+activeBearFVG = not na(lastBearFVGbar) and (bar_index - lastBearFVGbar) <= fvgLookback
+
+// ── LTF MSS ──
+ltfPH = ta.pivothigh(high, ltfSwingLen, ltfSwingLen)
+ltfPL = ta.pivotlow (low,  ltfSwingLen, ltfSwingLen)
+var float ltfLastPH = na
+var float ltfLastPL = na
+if not na(ltfPH)
+    ltfLastPH := ltfPH
+if not na(ltfPL)
+    ltfLastPL := ltfPL
+mssUp = not na(ltfLastPH) and close > ltfLastPH
+mssDn = not na(ltfLastPL) and close < ltfLastPL
+
+// ── Kill Zones ──
+inKZ1 = not na(time(timeframe.period, killZone1, sessionTZ))
+inKZ2 = not na(time(timeframe.period, killZone2, sessionTZ))
+inKZ  = inKZ1 or inKZ2
+canTradeTime = not useKillZones or inKZ
+
+// ── Failed Auction trackers ──
+var bool wentBelowVAL = false
+var bool wentAboveVAH = false
+if not na(sessVAL) and close < sessVAL
+    wentBelowVAL := true
+if not na(sessVAH) and close > sessVAH
+    wentAboveVAH := true
+bool failAuctionLong  = false
+bool failAuctionShort = false
+if useFailAuction and not na(sessVAL) and not na(sessVAH)
+    if wentBelowVAL and close > sessVAL and close <= sessVAH
+        failAuctionLong := true
+        wentBelowVAL    := false
+    if wentAboveVAH and close < sessVAH and close >= sessVAL
+        failAuctionShort := true
+        wentAboveVAH     := false
+
+breakoutLong  = useBreakout and not na(sessVAH) and close > sessVAH and close[1] > sessVAH
+breakoutShort = useBreakout and not na(sessVAL) and close < sessVAL and close[1] < sessVAL
+
+// ── Composite с фильтрами + cooldown ──
+var int lastLongBar  = na
+var int lastShortBar = na
+htfOKlong  = not useHTFFilter or htfBull
+htfOKshort = not useHTFFilter or htfBear
+rawLong  = (failAuctionLong  or breakoutLong)  and bias == 1  and canTradeTime and htfOKlong  and (not requireFVG or activeBullFVG) and (not requireMSS or mssUp)
+rawShort = (failAuctionShort or breakoutShort) and bias == -1 and canTradeTime and htfOKshort and (not requireFVG or activeBearFVG) and (not requireMSS or mssDn)
+cooldownOKlong  = na(lastLongBar)  or (bar_index - lastLongBar)  > cooldownBars
+cooldownOKshort = na(lastShortBar) or (bar_index - lastShortBar) > cooldownBars
+
+slLong  = low  - slAtrMult * atr
+slShort = high + slAtrMult * atr
+tpLong = switch tpMode
+    "Opposite VA" => not na(sessVAH) ? sessVAH : close + tpAtrMult * atr
+    "RR Multiple" => close + (close - slLong) * rrTarget
+    => close + tpAtrMult * atr
+tpShort = switch tpMode
+    "Opposite VA" => not na(sessVAL) ? sessVAL : close - tpAtrMult * atr
+    "RR Multiple" => close - (slShort - close) * rrTarget
+    => close - tpAtrMult * atr
+rrLong  = (tpLong  - close) / math.max(close - slLong, syminfo.mintick)
+rrShort = (close - tpShort) / math.max(slShort - close, syminfo.mintick)
+
+longOK  = rawLong  and cooldownOKlong  and rrLong  >= minRR
+shortOK = rawShort and cooldownOKshort and rrShort >= minRR
+
+if longOK
+    lastLongBar := bar_index
+if shortOK
+    lastShortBar := bar_index
+
+// ============================================================================
+//  STRATEGY ORDERS
+// ============================================================================
+if inBTWindow
+    if longOK and strategy.position_size <= 0
+        strategy.entry("LONG", strategy.long)
+        strategy.exit("TP/SL LONG", from_entry="LONG", stop=slLong, limit=tpLong)
+    if shortOK and strategy.position_size >= 0
+        strategy.entry("SHORT", strategy.short)
+        strategy.exit("TP/SL SHORT", from_entry="SHORT", stop=slShort, limit=tpShort)
+
+// Трейлинг (опционально)
+if useTrailing
+    if strategy.position_size > 0
+        trailSL = close - trailAtr * atr
+        strategy.exit("Trail LONG", from_entry="LONG", stop=trailSL)
+    if strategy.position_size < 0
+        trailSR = close + trailAtr * atr
+        strategy.exit("Trail SHORT", from_entry="SHORT", stop=trailSR)
+
+// Закрытие всех позиций по окну бэктеста
+if not inBTWindow and strategy.position_size != 0
+    strategy.close_all()
+
+// Визуал для подтверждения сигналов
+plotshape(longOK,  title="LONG",  location=location.belowbar,
+     style=shape.triangleup,   color=color.green, size=size.small)
+plotshape(shortOK, title="SHORT", location=location.abovebar,
+     style=shape.triangledown, color=color.red,   size=size.small)
+plot(sessVAH, "VAH", color=color.new(color.red,   40), style=plot.style_linebr, linewidth=2)
+plot(sessPOC, "POC", color=color.new(color.yellow,40), style=plot.style_linebr, linewidth=1)
+plot(sessVAL, "VAL", color=color.new(color.green, 40), style=plot.style_linebr, linewidth=2)
+bgcolor(bias ==  1 ? color.new(color.green, 95) : bias == -1 ? color.new(color.red, 95) : na)
