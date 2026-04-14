@@ -71,14 +71,17 @@ fvgLookback   = input.int(5, "Окно активного FVG (баров)", min
 useFailAuction = input.bool(true, "Сетап Failed Auction", group=grpSig)
 useBreakout    = input.bool(true, "Сетап Breakout",        group=grpSig)
 requireFVG     = input.bool(true, "Требовать FVG во входе", group=grpSig)
-requireMSS     = input.bool(true, "Требовать MSS на LTF",   group=grpSig)
+requireMSS     = input.bool(false, "Требовать MSS на LTF",   group=grpSig,
+     tooltip="MSS на 15M сильно режет частоту. Для 1M/5M — можно включать.")
+debugMode      = input.bool(false, "DEBUG: показать raw сетапы (игнор фильтров)", group=grpSig,
+     tooltip="Сигналы фильтруются только по bias. Для изучения и настройки.")
 useKillZones   = input.bool(true, "Торговать только в Kill Zones", group=grpSig,
      tooltip="London + NY. Вне этих окон сигналы игнорируются.")
 killZone1      = input.session("0930-1100", "KZ #1 (US100: NY Open / FX: London)", group=grpSig,
      tooltip="US100 дефолт: 09:30-11:00 NY (первый час). Для Forex: 0200-0500 (London KZ).")
 killZone2      = input.session("1330-1500", "KZ #2 (US100: Power Hour / FX: NY)", group=grpSig,
      tooltip="US100 дефолт: 13:30-15:00 NY (Power Hour). Для Forex: 0700-1000 (NY KZ).")
-cooldownBars   = input.int(10, "Cooldown между сигналами (баров)", minval=0, maxval=200, group=grpSig,
+cooldownBars   = input.int(5, "Cooldown между сигналами (баров)", minval=0, maxval=200, group=grpSig,
      tooltip="Сколько баров не повторять сигнал той же стороны — защита от спама.")
 minRR          = input.float(1.5, "Минимальный R:R", minval=1.0, step=0.5, group=grpSig)
 
@@ -352,10 +355,14 @@ if useFailAuction and not na(sessVAL) and not na(sessVAH)
         wentAboveVAH     := false
 
 // ============================================================================
-//  BREAKOUT trackers (закрепление за пределами VA)
+//  BREAKOUT trackers (первое закрепление за VA — one-shot)
 // ============================================================================
-breakoutLong  = useBreakout and not na(sessVAH) and close > sessVAH and close[1] > sessVAH
-breakoutShort = useBreakout and not na(sessVAL) and close < sessVAL and close[1] < sessVAL
+// Фиксируем именно момент пересечения, а не факт нахождения за границей.
+// close[1] > sessVAH защищает от одиночного фитиля — требуется 2 бара подтверждения.
+bullCross = not na(sessVAH) and close > sessVAH and close[2] <= sessVAH
+bearCross = not na(sessVAL) and close < sessVAL and close[2] >= sessVAL
+breakoutLong  = useBreakout and bullCross
+breakoutShort = useBreakout and bearCross
 
 // ============================================================================
 //  COMPOSITE SIGNALS с cooldown + всеми фильтрами
@@ -366,8 +373,18 @@ var int lastShortBar = na
 htfOKlong  = not useHTFFilter or htfBull
 htfOKshort = not useHTFFilter or htfBear
 
-rawLong  = (failAuctionLong  or breakoutLong)  and bias == 1  and canTradeTime and htfOKlong  and (not requireFVG or activeBullFVG) and (not requireMSS or mssUp)
-rawShort = (failAuctionShort or breakoutShort) and bias == -1 and canTradeTime and htfOKshort and (not requireFVG or activeBearFVG) and (not requireMSS or mssDn)
+// RAW — без строгих фильтров (только bias). Используется для debug отображения.
+rawLongBase  = (failAuctionLong  or breakoutLong)  and bias == 1
+rawShortBase = (failAuctionShort or breakoutShort) and bias == -1
+
+// Полные сигналы с фильтрами
+rawLong  = rawLongBase  and canTradeTime and htfOKlong  and (not requireFVG or activeBullFVG) and (not requireMSS or mssUp)
+rawShort = rawShortBase and canTradeTime and htfOKshort and (not requireFVG or activeBearFVG) and (not requireMSS or mssDn)
+
+// В debug-режиме — только bias фильтр
+if debugMode
+    rawLong  := rawLongBase
+    rawShort := rawShortBase
 
 cooldownOKlong  = na(lastLongBar)  or (bar_index - lastLongBar)  > cooldownBars
 cooldownOKshort = na(lastShortBar) or (bar_index - lastShortBar) > cooldownBars
@@ -400,10 +417,20 @@ if shortOK
 // ============================================================================
 //  PLOT: сигналы + структура
 // ============================================================================
+// Основные сигналы (все фильтры прошли)
 plotshape(longOK,  title="LONG",  location=location.belowbar,
      style=shape.triangleup,   color=bullColor, size=size.small, text="LONG")
 plotshape(shortOK, title="SHORT", location=location.abovebar,
      style=shape.triangledown, color=bearColor, size=size.small, text="SHORT")
+
+// Raw-сетапы — тусклые точки. Видно, что сетап найден, но фильтры не пустили.
+// Помогает понять какой фильтр режет сигналы.
+rawLongOnly  = rawLongBase  and not longOK
+rawShortOnly = rawShortBase and not shortOK
+plotshape(rawLongOnly,  title="raw LONG",  location=location.belowbar,
+     style=shape.circle, color=color.new(bullColor, 60), size=size.tiny)
+plotshape(rawShortOnly, title="raw SHORT", location=location.abovebar,
+     style=shape.circle, color=color.new(bearColor, 60), size=size.tiny)
 
 if bosUp and showBOS
     label.new(bar_index, high, "BOS↑", style=label.style_label_down,

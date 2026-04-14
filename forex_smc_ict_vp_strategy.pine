@@ -46,11 +46,11 @@ grpSig = "4. Сигналы"
 useFailAuction = input.bool(true, "Failed Auction", group=grpSig)
 useBreakout    = input.bool(true, "Breakout", group=grpSig)
 requireFVG     = input.bool(true, "Требовать FVG",  group=grpSig)
-requireMSS     = input.bool(true, "Требовать MSS",  group=grpSig)
+requireMSS     = input.bool(false,"Требовать MSS",  group=grpSig)
 useKillZones   = input.bool(true, "Kill Zones only", group=grpSig)
 killZone1      = input.session("0930-1100", "KZ #1 (US100 NY Open)", group=grpSig)
 killZone2      = input.session("1330-1500", "KZ #2 (US100 Power Hour)", group=grpSig)
-cooldownBars   = input.int(10, "Cooldown bars", minval=0, maxval=200, group=grpSig)
+cooldownBars   = input.int(5, "Cooldown bars", minval=0, maxval=200, group=grpSig)
 minRR          = input.float(1.5, "Min R:R", minval=1.0, step=0.5, group=grpSig)
 
 // ── Риск ──
@@ -212,8 +212,11 @@ if useFailAuction and not na(sessVAL) and not na(sessVAH)
         failAuctionShort := true
         wentAboveVAH     := false
 
-breakoutLong  = useBreakout and not na(sessVAH) and close > sessVAH and close[1] > sessVAH
-breakoutShort = useBreakout and not na(sessVAL) and close < sessVAL and close[1] < sessVAL
+// One-shot breakout: фиксируем именно пересечение VAH/VAL с 2-бар подтверждением
+bullCross = not na(sessVAH) and close > sessVAH and close[2] <= sessVAH
+bearCross = not na(sessVAL) and close < sessVAL and close[2] >= sessVAL
+breakoutLong  = useBreakout and bullCross
+breakoutShort = useBreakout and bearCross
 
 // ── Composite с фильтрами + cooldown ──
 var int lastLongBar  = na
