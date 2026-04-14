@@ -35,7 +35,7 @@ ltfSwingLen = input.int(3, "LTF swing length (для MSS на текущем Т�
      minval=2, maxval=20, group=grpStruct)
 
 // ── Структура ──
-swingLen      = input.int(5, "MTF Swing Length (pivot)", minval=2, maxval=50, group=grpStruct,
+swingLen      = input.int(8, "MTF Swing Length (pivot)", minval=2, maxval=50, group=grpStruct,
      tooltip="Сколько баров слева/справа должно быть меньше/больше, чтобы считать пик/дно структурным.")
 useBodyBreak  = input.bool(true, "Только body breaks (игнорировать фитили)", group=grpStruct,
      tooltip="Ломаем структуру только телом свечи. Защита от ложных пробоев тенями.")
@@ -48,10 +48,10 @@ showCHoCH     = input.bool(true, "Показывать CHoCH лейблы", grou
 // ── Volume Profile ──
 sessionTZ     = input.string("America/New_York", "Тайм-зона сессии",
      options=["America/New_York","Etc/UTC","Europe/London"], group=grpVP)
-sessionStart  = input.session("1800-0855", "Окно профиля (HHMM-HHMM)", group=grpVP,
-     tooltip="С 18:00 NY до 08:55 NY. Переход через полночь поддерживается автоматически.")
-rowSize       = input.int(200, "Row Size (бинов)", minval=50, maxval=2000, step=50, group=grpVP,
-     tooltip="По ТЗ — 1000. Для производительности рекомендуется 200–500 на большинстве FX.")
+sessionStart  = input.session("0400-0930", "Окно профиля (HHMM-HHMM)", group=grpVP,
+     tooltip="US100: 04:00–09:30 NY (премаркет до открытия кэша). Для Forex используйте 1800-0855.")
+rowSize       = input.int(300, "Row Size (бинов)", minval=50, maxval=2000, step=50, group=grpVP,
+     tooltip="US100 рекомендуется 300. По ТЗ Forex — 1000. Производительное значение для FX — 200.")
 vaPct         = input.float(70.0, "Value Area %", minval=50.0, maxval=95.0, step=1.0, group=grpVP)
 showVAH       = input.bool(true, "Показывать VAH", group=grpVP)
 showPOC       = input.bool(true, "Показывать POC", group=grpVP)
@@ -74,15 +74,17 @@ requireFVG     = input.bool(true, "Требовать FVG во входе", grou
 requireMSS     = input.bool(true, "Требовать MSS на LTF",   group=grpSig)
 useKillZones   = input.bool(true, "Торговать только в Kill Zones", group=grpSig,
      tooltip="London + NY. Вне этих окон сигналы игнорируются.")
-killZone1      = input.session("0200-0500", "London Kill Zone", group=grpSig)
-killZone2      = input.session("0700-1000", "NY Kill Zone",     group=grpSig)
+killZone1      = input.session("0930-1100", "KZ #1 (US100: NY Open / FX: London)", group=grpSig,
+     tooltip="US100 дефолт: 09:30-11:00 NY (первый час). Для Forex: 0200-0500 (London KZ).")
+killZone2      = input.session("1330-1500", "KZ #2 (US100: Power Hour / FX: NY)", group=grpSig,
+     tooltip="US100 дефолт: 13:30-15:00 NY (Power Hour). Для Forex: 0700-1000 (NY KZ).")
 cooldownBars   = input.int(10, "Cooldown между сигналами (баров)", minval=0, maxval=200, group=grpSig,
      tooltip="Сколько баров не повторять сигнал той же стороны — защита от спама.")
-minRR          = input.float(2.0, "Минимальный R:R", minval=1.0, step=0.5, group=grpSig)
+minRR          = input.float(1.5, "Минимальный R:R", minval=1.0, step=0.5, group=grpSig)
 
 // ── Риск ──
 atrLen      = input.int(14, "ATR length", group=grpRisk)
-slAtrMult   = input.float(1.5, "SL буфер (× ATR)", minval=0.1, step=0.1, group=grpRisk)
+slAtrMult   = input.float(2.0, "SL буфер (× ATR)", minval=0.1, step=0.1, group=grpRisk)
 tpMode      = input.string("Opposite VA", "TP режим",
      options=["Opposite VA","RR Multiple","ATR Multiple"], group=grpRisk)
 rrTarget    = input.float(3.0, "RR Target", minval=1.0, step=0.5, group=grpRisk)

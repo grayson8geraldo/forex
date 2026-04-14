@@ -23,7 +23,7 @@ grpStruct = "1. Структура рынка"
 htfTF   = input.timeframe("240", "HTF",  group=grpStruct)
 mtfTF   = input.timeframe("15",  "MTF (bias)", group=grpStruct)
 ltfSwingLen = input.int(3, "LTF swing length", minval=2, maxval=20, group=grpStruct)
-swingLen      = input.int(5,  "MTF Swing Length", minval=2, maxval=50, group=grpStruct)
+swingLen      = input.int(8,  "MTF Swing Length", minval=2, maxval=50, group=grpStruct)
 useBodyBreak  = input.bool(true, "Только body breaks",     group=grpStruct)
 useHTFFilter  = input.bool(false,"Требовать HTF EMA align", group=grpStruct)
 htfEmaLen     = input.int(50, "HTF EMA length", minval=10, maxval=300, group=grpStruct)
@@ -32,8 +32,8 @@ htfEmaLen     = input.int(50, "HTF EMA length", minval=10, maxval=300, group=grp
 grpVP = "2. Volume Profile"
 sessionTZ     = input.string("America/New_York", "TZ",
      options=["America/New_York","Etc/UTC","Europe/London"], group=grpVP)
-sessionStart  = input.session("1800-0855", "Окно профиля", group=grpVP)
-rowSize       = input.int(200, "Row Size", minval=50, maxval=2000, step=50, group=grpVP)
+sessionStart  = input.session("0400-0930", "Окно профиля", group=grpVP)
+rowSize       = input.int(300, "Row Size", minval=50, maxval=2000, step=50, group=grpVP)
 vaPct         = input.float(70.0, "Value Area %", minval=50.0, maxval=95.0, step=1.0, group=grpVP)
 
 // ── ICT ──
@@ -48,15 +48,15 @@ useBreakout    = input.bool(true, "Breakout", group=grpSig)
 requireFVG     = input.bool(true, "Требовать FVG",  group=grpSig)
 requireMSS     = input.bool(true, "Требовать MSS",  group=grpSig)
 useKillZones   = input.bool(true, "Kill Zones only", group=grpSig)
-killZone1      = input.session("0200-0500", "London KZ", group=grpSig)
-killZone2      = input.session("0700-1000", "NY KZ",     group=grpSig)
+killZone1      = input.session("0930-1100", "KZ #1 (US100 NY Open)", group=grpSig)
+killZone2      = input.session("1330-1500", "KZ #2 (US100 Power Hour)", group=grpSig)
 cooldownBars   = input.int(10, "Cooldown bars", minval=0, maxval=200, group=grpSig)
-minRR          = input.float(2.0, "Min R:R", minval=1.0, step=0.5, group=grpSig)
+minRR          = input.float(1.5, "Min R:R", minval=1.0, step=0.5, group=grpSig)
 
 // ── Риск ──
 grpRisk = "5. Риск"
 atrLen      = input.int(14,   "ATR length",       group=grpRisk)
-slAtrMult   = input.float(1.5,"SL × ATR",         minval=0.1, step=0.1, group=grpRisk)
+slAtrMult   = input.float(2.0,"SL × ATR",         minval=0.1, step=0.1, group=grpRisk)
 tpMode      = input.string("Opposite VA", "TP",
      options=["Opposite VA","RR Multiple","ATR Multiple"], group=grpRisk)
 rrTarget    = input.float(3.0,"RR Target",        minval=1.0, step=0.5, group=grpRisk)
